@@ -187,6 +187,54 @@ tr:hover td { background: var(--bg); }
 .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--ink); }
 .btn-outline:hover { border-color: var(--ink); }
 
+/* Remove button */
+.btn-remove {
+  padding: 5px 12px; border-radius: 8px; font-size: 12px;
+  font-family: 'Montserrat', sans-serif; font-weight: 600;
+  cursor: pointer; border: 1px solid rgba(192,57,43,0.3);
+  background: rgba(192,57,43,0.06); color: var(--danger);
+  transition: all 0.2s; white-space: nowrap;
+}
+.btn-remove:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+.btn-remove:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Confirm dialog */
+.confirm-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,0.5); backdrop-filter: blur(6px);
+  z-index: 200; align-items: center; justify-content: center;
+}
+.confirm-overlay.open { display: flex; }
+.confirm-box {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 18px; padding: 32px; width: 420px; max-width: 95vw;
+  text-align: center;
+}
+.confirm-box .warn-icon { font-size: 40px; margin-bottom: 12px; }
+.confirm-box h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+.confirm-box p { font-size: 13px; color: var(--muted); margin-bottom: 24px; line-height: 1.6; }
+.confirm-box .number-highlight {
+  display: inline-block; background: var(--danger-bg); color: var(--danger);
+  padding: 4px 12px; border-radius: 8px; font-weight: 700;
+  margin: 0 4px; font-size: 14px;
+}
+.confirm-actions { display: flex; gap: 10px; justify-content: center; }
+
+/* Toast */
+.toast-wrap {
+  position: fixed; bottom: 24px; right: 24px; z-index: 300;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.toast-msg {
+  padding: 14px 18px; border-radius: 12px; font-size: 13px;
+  font-weight: 500; display: flex; gap: 10px; align-items: center;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  animation: toastIn 0.3s ease;
+}
+@keyframes toastIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+.toast-success { background:#fff; border-left:4px solid var(--safe); color:var(--ink); }
+.toast-error   { background:#fff; border-left:4px solid var(--danger); color:var(--ink); }
+
 /* Scroll */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--bg); }
@@ -288,6 +336,7 @@ tr:hover td { background: var(--bg); }
             <th>Phone Number</th>
             <th>Name</th>
             <th>Role</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody id="membersBody"></tbody>
@@ -318,9 +367,11 @@ let groupData  = null;
 let activeFilter = 'all'; // always start with all
 
 // Get params from URL
-const params  = new URLSearchParams(window.location.search);
-const groupId = params.get('id');
+const params    = new URLSearchParams(window.location.search);
+const groupId   = params.get('id');
 const serverUrl = localStorage.getItem('yct_server') || 'http://localhost:3000';
+console.log('🔍 Group ID from URL:', groupId);
+console.log('🔍 Server URL:', serverUrl);
 
 async function loadMembers() {
   if (!groupId) {
@@ -333,8 +384,25 @@ async function loadMembers() {
   document.getElementById('errorState').style.display   = 'none';
 
   try {
-    const res  = await fetch(`${serverUrl}/api/group/${encodeURIComponent(groupId)}/members`);
-    if (!res.ok) throw new Error(`Server error: ${res.status}`);
+    // Add 20s timeout so it doesn't hang forever
+    console.log('🔍 Fetching:', `${serverUrl}/api/group/${encodeURIComponent(groupId)}/members`);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, 20000);
+    const res = await fetch(
+      `${serverUrl}/api/group/${encodeURIComponent(groupId)}/members`,
+      { signal: controller.signal }
+    ).catch(err => {
+      if (err.name === 'AbortError') throw new Error('Request timed out after 20 seconds — server may be busy');
+      throw err;
+    });
+    clearTimeout(timeout);
+    console.log('🔍 Response status:', res.status);
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Server error ${res.status}: ${errText}`);
+    }
     const data = await res.json();
 
     groupData  = data.group;
@@ -411,7 +479,11 @@ function renderTable() {
   tbody.innerHTML = list.map((m, i) => {
     const roleClass = `role-${m.role}`; // owner, admin, member
     const roleLabel = m.role === 'owner' ? '👑 Community Owner' : m.role === 'admin' ? '🛡️ Community Admin' : '👤 Member';
-    return `<tr>
+    const isProtected = m.role === 'owner' || m.role === 'admin';
+    const removeBtn = isProtected
+      ? `<button class="btn-remove" disabled title="Cannot remove owners or admins">Protected</button>`
+      : `<button class="btn-remove" onclick="askRemove('${m.number}', '${(m.name||'').replace(/'/g,"\\'")}')">Remove</button>`;
+    return `<tr id="row-${m.number}">
       <td class="row-num">${i + 1}</td>
       <td>
         <div class="member-num">+${m.number}</div>
@@ -419,6 +491,7 @@ function renderTable() {
       </td>
       <td>${m.name || '<span style="color:var(--muted)">—</span>'}</td>
       <td><span class="role-badge ${roleClass}">${roleLabel}</span></td>
+      <td>${removeBtn}</td>
     </tr>`;
   }).join('');
 }
@@ -436,8 +509,97 @@ function exportCSV() {
   a.click();
 }
 
-// Load on page start
-loadMembers();
+// ── Remove member logic ─────────────────────────────
+let pendingRemoveNumber = null;
+
+function askRemove(number, name) {
+  pendingRemoveNumber = number;
+  document.getElementById('confirmNumber').textContent = '+' + number;
+  document.getElementById('confirmGroup').textContent  = groupData?.name || 'this group';
+  document.getElementById('confirmOverlay').classList.add('open');
+}
+
+function closeConfirm() {
+  document.getElementById('confirmOverlay').classList.remove('open');
+  pendingRemoveNumber = null;
+}
+
+async function confirmRemove() {
+  if (!pendingRemoveNumber) return;
+  const number = pendingRemoveNumber;
+  const btn = document.getElementById('confirmBtn');
+  btn.disabled = true;
+  btn.textContent = 'Removing...';
+
+  try {
+    const res = await fetch(
+      `${serverUrl}/api/group/${encodeURIComponent(groupId)}/members/${number}`,
+      { method: 'DELETE' }
+    );
+    const data = await res.json();
+
+    if (data.success) {
+      // Remove row from UI instantly
+      const row = document.getElementById(`row-${number}`);
+      if (row) { row.style.opacity = '0'; row.style.transition = 'opacity 0.3s'; setTimeout(() => row.remove(), 300); }
+
+      // Update member list in memory
+      allMembers = allMembers.filter(m => m.number !== number);
+
+      // Update stats
+      document.getElementById('statTotal').textContent  = allMembers.length.toLocaleString();
+      document.getElementById('statMember').textContent = allMembers.filter(m => m.role === 'member').length.toLocaleString();
+
+      showToast(`✅ Removed +${number} successfully`, 'success');
+    } else {
+      showToast(`❌ Failed: ${data.error || 'Unknown error'}`, 'error');
+    }
+  } catch (err) {
+    showToast(`❌ Error: ${err.message}`, 'error');
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Yes, Remove';
+  closeConfirm();
+}
+
+function showToast(msg, type = 'success') {
+  const wrap = document.getElementById('toastWrap');
+  const el = document.createElement('div');
+  el.className = `toast-msg toast-${type}`;
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity 0.3s'; }, 4000);
+  setTimeout(() => el.remove(), 4400);
+}
+
+// Load on page start — wait for DOM to be fully ready
+window.addEventListener('DOMContentLoaded', () => {
+  // Close confirm on overlay click
+  const overlay = document.getElementById('confirmOverlay');
+  if (overlay) {
+    overlay.addEventListener('click', function(e) {
+      if (e.target === this) closeConfirm();
+    });
+  }
+  loadMembers();
+});
 </script>
+<!-- Confirm Remove Dialog -->
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-box">
+    <div class="warn-icon">⚠️</div>
+    <h3>Remove Member?</h3>
+    <p>You are about to remove<br><span class="number-highlight" id="confirmNumber">+91XXXXXXXXXX</span><br>from <strong id="confirmGroup"></strong>.<br>This action cannot be undone.</p>
+    <div class="confirm-actions">
+      <button class="btn btn-outline" onclick="closeConfirm()">Cancel</button>
+      <button class="btn btn-dark" style="background:var(--danger)" id="confirmBtn" onclick="confirmRemove()">Yes, Remove</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-wrap" id="toastWrap"></div>
+
 </body>
 </html>

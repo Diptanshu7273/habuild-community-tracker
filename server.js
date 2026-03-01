@@ -36,7 +36,7 @@ const CONFIG = {
   // Your WhatsApp number to receive alerts (include country code, no +)
   // This should be one of your 21 phones OR a manager's personal number
   ALERT_PHONE_ID: process.env.ALERT_PHONE_ID || '134920',
-  ALERT_NUMBER:   process.env.ALERT_NUMBER   || '917273021959', // no + sign
+  ALERT_NUMBER:   process.env.ALERT_NUMBER   || '91XXXXXXXXXX', // no + sign
 
   PORT:      process.env.PORT || 3000,
   DATA_FILE: path.join(__dirname, 'data', 'communities.json'),
@@ -253,9 +253,10 @@ async function syncAllGroups() {
   // (Same community can be admin'd from multiple phones)
   const nameMap = {};
   for (const g of allGroups) {
-    // Maytapi group fields: id (conversation_id), name, participants (array)
-    const name    = (g.name || g.subject || 'Unnamed Group').trim();
-    const count   = g.participants?.length ?? g.participants_count ?? 0;
+    // Maytapi group fields — response is { success, data: [...groups] }
+    // Each group: { id, name, participants: [...] } or participants_count
+    const name    = (g.name || g.subject || g.title || 'Unnamed Group').trim();
+    const count   = g.participants?.length ?? g.participants_count ?? g.size ?? 0;
     const groupId = g.id || g.conversation_id;
     const phoneId = g._phone_id;
 
@@ -430,49 +431,101 @@ app.post('/api/config', (req, res) => {
 
 // Get members list for a specific group
 app.get('/api/group/:groupId/members', async (req, res) => {
-  const { groupId } = req.params;
+  // Decode groupId — it may contain encoded @ and . characters
+  const groupId = decodeURIComponent(req.params.groupId);
+  console.log(`📥 Members request for groupId: ${groupId}`);
+  console.log(`📋 Known communities: ${Object.keys(db.communities).slice(0,3).join(', ')}...`);
+
   const community = db.communities[groupId];
-  if (!community) return res.status(404).json({ error: 'Group not found' });
+  if (!community) {
+    console.error(`❌ Community not found for groupId: ${groupId}`);
+    return res.status(404).json({ error: `Group not found: ${groupId}` });
+  }
 
   try {
     const phoneId = community.phoneId;
-    const groups  = await fetchGroupsForPhone(phoneId);
-    const group   = groups.find(g => (g.id || g.conversation_id) === groupId);
+
+    // Use direct group info endpoint
+    let group = null;
+    try {
+      const directRes = await axios.get(
+        apiUrl(`/${phoneId}/getGroupInfo`),
+        { headers: maytapiHeaders(), params: { id: groupId }, timeout: 15000 }
+      );
+      const d = directRes.data;
+      console.log('🔍 getGroupInfo keys:', Object.keys(d||{}).join(','));
+
+      // Maytapi wraps response: { success, data: { ...groupInfo } }
+      const raw = d?.data || d;
+      console.log('🔍 raw group keys:', Object.keys(raw||{}).join(','));
+
+      if (raw?.participants) {
+        group = raw;
+      } else if (Array.isArray(raw) && raw[0]?.participants) {
+        group = raw[0];
+      }
+    } catch (e) {
+      console.warn('⚠️ getGroupInfo failed:', e.message);
+    }
+
+    // Fallback: search through all groups
+    if (!group) {
+      console.log('⚠️ Falling back to full group list search...');
+      const groups = await fetchGroupsForPhone(phoneId);
+      group = groups.find(g => (g.id || g.conversation_id) === groupId);
+      if (group) console.log('🔍 Found group via fallback, participant keys:', Object.keys(group?.participants?.[0]||{}).join(','));
+    }
 
     if (!group) return res.status(404).json({ error: 'Group not found on phone' });
 
-    // Debug: log raw participant structure to understand Maytapi's fields
+    // Participants are plain strings like "917030210331@c.us"
+    // Need to also fetch admins separately via getGroupAdmins or similar
     const rawParticipants = group.participants || group.members || [];
-    if (rawParticipants.length > 0) {
-      console.log('🔍 Sample participant fields:', JSON.stringify(rawParticipants[0]));
+    console.log(`📋 Total participants: ${rawParticipants.length}, sample:`, JSON.stringify(rawParticipants[0]));
+
+    // Extract admin/owner info directly from group object fields
+    // Maytapi group object contains: admins[], owner, groupAdmins[] etc.
+    let adminNumbers = new Set();
+    let ownerNumbers = new Set();
+
+    console.log('🔍 Group object keys:', Object.keys(group).join(','));
+
+    // Check owner field
+    const ownerRaw = group.owner || group.creator || group.createdBy || '';
+    if (ownerRaw) {
+      const ownerNum = (typeof ownerRaw === 'string' ? ownerRaw : ownerRaw.id || '')
+        .replace('@s.whatsapp.net','').replace('@c.us','');
+      if (ownerNum) ownerNumbers.add(ownerNum);
     }
 
-    const members = rawParticipants.map(p => {
-      // Extract phone number — Maytapi uses id like "919876543210@s.whatsapp.net"
-      const number = (p.id || p.number || p.phone || 'Unknown')
-        .replace('@s.whatsapp.net','')
-        .replace('@c.us','')
-        .trim();
+    // Check admins array
+    const adminsRaw = group.admins || group.groupAdmins || group.administrators || [];
+    const adminsList = Array.isArray(adminsRaw) ? adminsRaw : [];
+    adminsList.forEach(a => {
+      const num = (typeof a === 'string' ? a : (a.id || a.number || a.phone || ''))
+        .replace('@s.whatsapp.net','').replace('@c.us','');
+      if (num && !ownerNumbers.has(num)) adminNumbers.add(num);
+    });
 
-      // WhatsApp Community roles from Maytapi:
-      // p.admin can be: "superadmin" (Community Owner), "admin" (Community Admin), or undefined/null (member)
-      // p.rank can be: "owner", "admin", or undefined
-      // p.role can be: "owner", "admin", "member"
-      // p.type can be: "admin", "superadmin"
-      const rawAdmin = p.admin || p.rank || p.role || p.type || '';
+    console.log(`✅ Owner: ${[...ownerNumbers].join(',') || 'none found'}, Admins: ${adminNumbers.size}`);
+    console.log('🔍 All group keys for reference:', JSON.stringify(Object.fromEntries(
+      Object.entries(group).filter(([k]) => !['participants','members'].includes(k))
+    )).slice(0, 500));
+
+    // Build members array from participant strings
+    const members = rawParticipants.map(p => {
+      // p is either a string "919876543210@c.us" or an object
+      const rawId = typeof p === 'string' ? p : (p.id || p.number || p.phone || '');
+      const number = rawId.replace('@s.whatsapp.net','').replace('@c.us','').trim();
 
       let role = 'member';
-      if (rawAdmin === 'superadmin' || rawAdmin === 'owner' || p.isSuperAdmin) {
-        role = 'owner'; // Community Owner
-      } else if (rawAdmin === 'admin' || p.isAdmin || p.is_admin) {
-        role = 'admin'; // Community Admin
-      }
+      if (ownerNumbers.has(number)) role = 'owner';
+      else if (adminNumbers.has(number)) role = 'admin';
 
       return {
         number,
-        name: p.pushname || p.name || p.notify || p.verifiedName || '',
+        name: typeof p === 'object' ? (p.pushname || p.name || p.notify || '') : '',
         role,
-        rawAdmin, // keep raw value for debugging
       };
     });
 
@@ -498,6 +551,51 @@ app.get('/api/group/:groupId/members', async (req, res) => {
   } catch (err) {
     console.error('❌ Error fetching members:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Remove a participant from a group
+app.delete('/api/group/:groupId/members/:number', async (req, res) => {
+  const { groupId, number } = req.params;
+  const community = db.communities[groupId];
+  if (!community) return res.status(404).json({ error: 'Group not found' });
+
+  try {
+    const phoneId = community.phoneId;
+
+    // Maytapi endpoint: POST /{product_id}/{phone_id}/removeParticipant
+    const response = await axios.post(
+      apiUrl(`/${phoneId}/removeParticipant`),
+      {
+        conversation_id: groupId,
+        // Group members use @c.us suffix (not @s.whatsapp.net which is for DMs)
+        participant: `${number.replace(/@s\.whatsapp\.net|@c\.us/g, '')}@c.us`,
+      },
+      { headers: maytapiHeaders() }
+    );
+
+    console.log(`✅ Removed ${number} from ${community.name}`);
+
+    // Update count in db
+    if (db.communities[groupId]) {
+      db.communities[groupId].count = Math.max(0, db.communities[groupId].count - 1);
+      db.communities[groupId].updatedAt = new Date().toISOString();
+      db.history.unshift({
+        groupId,
+        groupName: community.name,
+        count: db.communities[groupId].count,
+        change: -1,
+        phoneId: String(phoneId),
+        date: new Date().toISOString(),
+        action: `Removed ${number}`,
+      });
+      saveData(db);
+    }
+
+    res.json({ success: true, message: `Removed ${number} from ${community.name}` });
+  } catch (err) {
+    console.error('❌ Remove participant error:', err.response?.data || err.message);
+    res.status(500).json({ success: false, error: err.response?.data || err.message });
   }
 });
 
