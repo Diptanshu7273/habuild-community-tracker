@@ -36,7 +36,7 @@ const CONFIG = {
   // Your WhatsApp number to receive alerts (include country code, no +)
   // This should be one of your 21 phones OR a manager's personal number
   ALERT_PHONE_ID: process.env.ALERT_PHONE_ID || '134920',
-  ALERT_NUMBER:   process.env.ALERT_NUMBER   || '91XXXXXXXXXX', // no + sign
+  ALERT_NUMBER:   process.env.ALERT_NUMBER   || '917273021959', // no + sign
 
   PORT:      process.env.PORT || 3000,
   DATA_FILE: path.join(__dirname, 'data', 'communities.json'),
