@@ -20,8 +20,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONFIG = {
   // Get these from https://console.maytapi.com/settings/token
-  MAYTAPI_PRODUCT_ID: process.env.MAYTAPI_PRODUCT_ID || 'bf6a3081-7fec-4509-aabd-60ba0200e883',
-  MAYTAPI_TOKEN:      process.env.MAYTAPI_TOKEN      || 'f944cd30-b896-41fd-b550-9a40789671f5',
+  MAYTAPI_PRODUCT_ID: process.env.MAYTAPI_PRODUCT_ID || '3bf10a8f-bca3-4bdb-826f-cf86fb4a74a3',
+  MAYTAPI_TOKEN:      process.env.MAYTAPI_TOKEN      || 'bd5a4bb3-86fc-451e-ba65-cc7220b1fa83',
   MAYTAPI_BASE:       'https://api.maytapi.com/api',
 
   // ⚠️ Add ALL 21 of your phone IDs here
