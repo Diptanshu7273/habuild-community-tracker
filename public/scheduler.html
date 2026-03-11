@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Schedule Messages — Habuild</title>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f5f2eb;
+  --surface: #ffffff;
+  --surface2: #ede9df;
+  --border: #d8d2c4;
+  --ink: #1a1a18;
+  --muted: #7a7568;
+  --danger: #c0392b;
+  --danger-bg: #fdf0ee;
+  --warn: #b8860b;
+  --warn-bg: #fefae8;
+  --safe: #2d7a4f;
+  --safe-bg: #edf7f2;
+  --accent: #2d5a8e;
+  --accent-bg: #eef3fa;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Montserrat', sans-serif;
+  min-height: 100vh;
+}
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none; z-index: 0; opacity: 0.4;
+}
+
+/* Header */
+header {
+  position: sticky; top: 0; z-index: 50;
+  background: rgba(245,242,235,0.92);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid var(--border);
+  padding: 0 48px;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 68px;
+}
+.back-btn {
+  display: flex; align-items: center; gap: 8px;
+  text-decoration: none; color: var(--ink);
+  font-size: 14px; font-weight: 500;
+  padding: 8px 16px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface);
+  transition: all 0.2s; cursor: pointer;
+}
+.back-btn:hover { border-color: var(--ink); }
+.logo { display: flex; align-items: center; gap: 10px; }
+.logo-name { font-size: 16px; font-weight: 700; }
+.logo-sub { font-size: 11px; color: var(--muted); }
+
+/* Main */
+main {
+  position: relative; z-index: 1;
+  max-width: 900px; margin: 0 auto;
+  padding: 36px 48px;
+}
+
+h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 8px; }
+.subtitle { font-size: 14px; color: var(--muted); margin-bottom: 32px; }
+
+/* Form */
+.form-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 32px;
+  margin-bottom: 32px;
+}
+.form-card h2 { font-size: 18px; font-weight: 700; margin-bottom: 24px; }
+
+.field { margin-bottom: 20px; }
+.field label {
+  display: block; font-size: 13px; font-weight: 600;
+  color: var(--muted); margin-bottom: 8px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.field input, .field textarea, .field select {
+  width: 100%; padding: 12px 16px;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 12px; font-size: 14px; color: var(--ink);
+  font-family: 'Montserrat', sans-serif; outline: none;
+  transition: border-color 0.2s;
+}
+.field input:focus, .field textarea:focus, .field select:focus {
+  border-color: var(--accent);
+}
+.field textarea { min-height: 120px; resize: vertical; }
+
+.field-row { display: flex; gap: 16px; }
+.field-row .field { flex: 1; }
+
+/* Message type selector */
+.type-tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+.type-tab {
+  padding: 8px 18px; border-radius: 20px; font-size: 13px;
+  cursor: pointer; border: 1px solid var(--border);
+  background: transparent; color: var(--muted);
+  font-family: 'Montserrat', sans-serif; font-weight: 500;
+  transition: all 0.2s;
+}
+.type-tab.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+/* File upload */
+.upload-area {
+  border: 2px dashed var(--border);
+  border-radius: 14px; padding: 32px;
+  text-align: center; cursor: pointer;
+  transition: all 0.2s; margin-bottom: 12px;
+}
+.upload-area:hover { border-color: var(--accent); background: var(--accent-bg); }
+.upload-area.has-file { border-color: var(--safe); background: var(--safe-bg); }
+.upload-icon { font-size: 32px; margin-bottom: 8px; }
+.upload-text { font-size: 13px; color: var(--muted); }
+.upload-filename { font-size: 13px; font-weight: 600; color: var(--safe); margin-top: 8px; }
+#fileInput { display: none; }
+
+/* Buttons */
+.btn {
+  padding: 12px 24px; border-radius: 12px; font-size: 14px;
+  font-family: 'Montserrat', sans-serif; font-weight: 600;
+  cursor: pointer; border: none; transition: all 0.2s;
+}
+.btn-primary { background: var(--ink); color: #fff; }
+.btn-primary:hover { opacity: 0.85; }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-outline { background: transparent; border: 1px solid var(--border); color: var(--ink); }
+.btn-outline:hover { border-color: var(--ink); }
+.btn-danger { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
+.btn-danger:hover { background: var(--danger); color: #fff; }
+.btn-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+
+/* Scheduled list */
+.scheduled-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px; overflow: hidden;
+}
+.scheduled-header {
+  padding: 22px 28px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.scheduled-header h2 { font-size: 18px; font-weight: 700; }
+
+.sched-item {
+  padding: 18px 28px;
+  border-bottom: 1px solid var(--surface2);
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; transition: background 0.2s;
+}
+.sched-item:last-child { border-bottom: none; }
+.sched-item:hover { background: var(--bg); }
+
+.sched-info { flex: 1; }
+.sched-time {
+  font-size: 12px; font-weight: 600; color: var(--accent);
+  background: var(--accent-bg); padding: 3px 10px;
+  border-radius: 12px; display: inline-block; margin-bottom: 8px;
+}
+.sched-msg {
+  font-size: 13px; color: var(--ink);
+  max-height: 60px; overflow: hidden;
+  line-height: 1.5;
+}
+.sched-meta { font-size: 11px; color: var(--muted); margin-top: 6px; }
+.sched-type {
+  font-size: 11px; padding: 3px 8px; border-radius: 8px;
+  background: var(--surface2); color: var(--muted); font-weight: 500;
+}
+
+.sched-status {
+  font-size: 11px; padding: 3px 10px; border-radius: 12px;
+  font-weight: 600; white-space: nowrap;
+}
+.status-pending { background: var(--warn-bg); color: var(--warn); }
+.status-sent { background: var(--safe-bg); color: var(--safe); }
+.status-failed { background: var(--danger-bg); color: var(--danger); }
+
+.sched-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+
+.empty-state {
+  text-align: center; padding: 48px 20px; color: var(--muted);
+}
+.empty-icon { font-size: 40px; margin-bottom: 12px; }
+.empty-state h3 { font-size: 16px; color: var(--ink); margin-bottom: 6px; }
+
+/* Toast */
+#toasts {
+  position: fixed; top: 80px; right: 24px; z-index: 200;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.toast {
+  padding: 14px 18px; border-radius: 12px; font-size: 13px;
+  max-width: 320px; display: flex; gap: 10px; align-items: center;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  animation: toastIn 0.3s ease; background: #fff;
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.toast-success { border-left: 4px solid var(--safe); }
+.toast-danger { border-left: 4px solid var(--danger); }
+.toast-info { border-left: 4px solid var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <button class="back-btn" onclick="window.location.href='dashboard.html'">← Back to Dashboard</button>
+  <div class="logo">
+    <div>
+      <div class="logo-name">Habuild</div>
+      <div class="logo-sub">Message Scheduler</div>
+    </div>
+  </div>
+</header>
+
+<div id="toasts"></div>
+
+<main>
+  <h1>📅 Schedule Messages</h1>
+  <p class="subtitle">Send a message to all your WhatsApp communities at a scheduled time</p>
+
+  <!-- Create new scheduled message -->
+  <div class="form-card">
+    <h2>New Scheduled Message</h2>
+
+    <!-- Message type -->
+    <div class="field">
+      <label>Message Type</label>
+      <div class="type-tabs">
+        <button class="type-tab active" onclick="setType('text',this)">📝 Text</button>
+        <button class="type-tab" onclick="setType('image',this)">🖼️ Image</button>
+        <button class="type-tab" onclick="setType('video',this)">🎬 Video</button>
+        <button class="type-tab" onclick="setType('document',this)">📄 Document</button>
+      </div>
+    </div>
+
+    <!-- Text message -->
+    <div class="field" id="textField">
+      <label>Message Text</label>
+      <textarea id="msgText" placeholder="Type your message here... Use *bold* and _italic_ for WhatsApp formatting"></textarea>
+    </div>
+
+    <!-- File upload (hidden by default) -->
+    <div class="field" id="fileField" style="display:none">
+      <label>Upload File</label>
+      <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+        <div class="upload-icon" id="uploadIcon">📁</div>
+        <div class="upload-text" id="uploadText">Click to upload or drag & drop</div>
+        <div class="upload-filename" id="uploadFilename"></div>
+      </div>
+      <input type="file" id="fileInput" onchange="handleFileSelect(event)" />
+    </div>
+
+    <!-- Caption (for media types) -->
+    <div class="field" id="captionField" style="display:none">
+      <label>Caption (optional)</label>
+      <textarea id="msgCaption" placeholder="Add a caption for your image/video/document..." style="min-height:60px"></textarea>
+    </div>
+
+    <!-- Schedule time -->
+    <div class="field-row">
+      <div class="field">
+        <label>Date</label>
+        <input type="date" id="schedDate" />
+      </div>
+      <div class="field">
+        <label>Time (IST)</label>
+        <input type="time" id="schedTime" />
+      </div>
+    </div>
+
+    <!-- Target -->
+    <div class="field">
+      <label>Send To</label>
+      <select id="targetSelect">
+        <option value="all">📢 All Communities</option>
+      </select>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" id="scheduleBtn" onclick="scheduleMessage()">📅 Schedule Message</button>
+      <button class="btn btn-outline" onclick="sendNow()">⚡ Send Now</button>
+      <span id="schedStatus" style="font-size:12px;color:var(--muted);"></span>
+    </div>
+  </div>
+
+  <!-- Upcoming scheduled messages -->
+  <div class="scheduled-card">
+    <div class="scheduled-header">
+      <h2>Scheduled & Sent Messages</h2>
+      <span id="schedCount" style="font-size:12px;color:var(--muted);"></span>
+    </div>
+    <div id="schedList"></div>
+    <div id="schedEmpty" class="empty-state">
+      <div class="empty-icon">📭</div>
+      <h3>No scheduled messages</h3>
+      <p>Create your first scheduled message above</p>
+    </div>
+  </div>
+</main>
+
+<script>
+const serverUrl = localStorage.getItem('yct_server') || 'http://localhost:3000';
+let messageType = 'text';
+let selectedFile = null;
+let allScheduled = [];
+
+// Set default date/time to now + 1 hour
+const now = new Date();
+now.setHours(now.getHours() + 1);
+document.getElementById('schedDate').value = now.toISOString().slice(0, 10);
+document.getElementById('schedTime').value = now.toTimeString().slice(0, 5);
+
+// Load communities for target dropdown
+async function loadCommunities() {
+  try {
+    const res = await fetch(`${serverUrl}/api/communities`);
+    const data = await res.json();
+    const select = document.getElementById('targetSelect');
+    select.innerHTML = `<option value="all">📢 All Communities (${data.total})</option>`;
+    (data.communities || []).forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = `${c.name} (${c.count} members)`;
+      select.appendChild(opt);
+    });
+  } catch (err) {
+    console.error('Failed to load communities:', err);
+  }
+}
+
+function setType(type, btn) {
+  messageType = type;
+  document.querySelectorAll('.type-tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  const textField    = document.getElementById('textField');
+  const fileField    = document.getElementById('fileField');
+  const captionField = document.getElementById('captionField');
+
+  if (type === 'text') {
+    textField.style.display    = 'block';
+    fileField.style.display    = 'none';
+    captionField.style.display = 'none';
+  } else {
+    textField.style.display    = 'none';
+    fileField.style.display    = 'block';
+    captionField.style.display = 'block';
+
+    const icons = { image: '🖼️', video: '🎬', document: '📄' };
+    const accepts = { image: 'image/*', video: 'video/*', document: '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt' };
+    document.getElementById('uploadIcon').textContent = icons[type];
+    document.getElementById('fileInput').accept = accepts[type];
+    document.getElementById('uploadText').textContent = `Click to upload ${type}`;
+  }
+
+  selectedFile = null;
+  document.getElementById('uploadFilename').textContent = '';
+  document.getElementById('uploadArea').classList.remove('has-file');
+}
+
+function handleFileSelect(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  selectedFile = file;
+  document.getElementById('uploadFilename').textContent = `✅ ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+  document.getElementById('uploadArea').classList.add('has-file');
+}
+
+async function scheduleMessage() {
+  const date   = document.getElementById('schedDate').value;
+  const time   = document.getElementById('schedTime').value;
+  const target = document.getElementById('targetSelect').value;
+  const text   = document.getElementById('msgText').value.trim();
+  const caption = document.getElementById('msgCaption').value.trim();
+
+  if (!date || !time) return toast('Please select date and time', 'danger');
+
+  if (messageType === 'text' && !text) return toast('Please enter a message', 'danger');
+  if (messageType !== 'text' && !selectedFile) return toast('Please upload a file', 'danger');
+
+  const scheduledAt = new Date(`${date}T${time}:00`).toISOString();
+
+  const formData = new FormData();
+  formData.append('type', messageType);
+  formData.append('target', target);
+  formData.append('scheduledAt', scheduledAt);
+  formData.append('text', messageType === 'text' ? text : caption);
+  if (selectedFile) formData.append('file', selectedFile);
+
+  document.getElementById('scheduleBtn').disabled = true;
+  document.getElementById('schedStatus').textContent = 'Scheduling...';
+
+  try {
+    const res = await fetch(`${serverUrl}/api/scheduler`, {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (data.success) {
+      toast('Message scheduled!', 'success');
+      clearForm();
+      loadScheduled();
+    } else {
+      toast(`Failed: ${data.error}`, 'danger');
+    }
+  } catch (err) {
+    toast(`Error: ${err.message}`, 'danger');
+  }
+
+  document.getElementById('scheduleBtn').disabled = false;
+  document.getElementById('schedStatus').textContent = '';
+}
+
+async function sendNow() {
+  if (!confirm('Send this message to all communities RIGHT NOW?')) return;
+
+  const target = document.getElementById('targetSelect').value;
+  const text   = document.getElementById('msgText').value.trim();
+  const caption = document.getElementById('msgCaption').value.trim();
+
+  if (messageType === 'text' && !text) return toast('Please enter a message', 'danger');
+  if (messageType !== 'text' && !selectedFile) return toast('Please upload a file', 'danger');
+
+  const formData = new FormData();
+  formData.append('type', messageType);
+  formData.append('target', target);
+  formData.append('scheduledAt', new Date().toISOString()); // now
+  formData.append('sendNow', 'true');
+  formData.append('text', messageType === 'text' ? text : caption);
+  if (selectedFile) formData.append('file', selectedFile);
+
+  document.getElementById('schedStatus').textContent = 'Sending...';
+
+  try {
+    const res = await fetch(`${serverUrl}/api/scheduler`, {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (data.success) {
+      toast('Message sent to all communities!', 'success');
+      clearForm();
+      loadScheduled();
+    } else {
+      toast(`Failed: ${data.error}`, 'danger');
+    }
+  } catch (err) {
+    toast(`Error: ${err.message}`, 'danger');
+  }
+
+  document.getElementById('schedStatus').textContent = '';
+}
+
+function clearForm() {
+  document.getElementById('msgText').value = '';
+  document.getElementById('msgCaption').value = '';
+  selectedFile = null;
+  document.getElementById('uploadFilename').textContent = '';
+  document.getElementById('uploadArea').classList.remove('has-file');
+  document.getElementById('fileInput').value = '';
+}
+
+async function loadScheduled() {
+  try {
+    const res = await fetch(`${serverUrl}/api/scheduler`);
+    const data = await res.json();
+    allScheduled = data.messages || [];
+    renderScheduled();
+  } catch (err) {
+    console.error('Failed to load scheduled:', err);
+  }
+}
+
+function renderScheduled() {
+  const list  = document.getElementById('schedList');
+  const empty = document.getElementById('schedEmpty');
+  const count = document.getElementById('schedCount');
+
+  const pending = allScheduled.filter(m => m.status === 'pending').length;
+  count.textContent = `${allScheduled.length} total, ${pending} pending`;
+
+  if (!allScheduled.length) {
+    list.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  list.innerHTML = allScheduled.map(m => {
+    const schedDate = new Date(m.scheduledAt).toLocaleString('en-IN', {
+      dateStyle: 'medium', timeStyle: 'short'
+    });
+    const typeIcons = { text: '📝', image: '🖼️', video: '🎬', document: '📄' };
+    const statusClass = `status-${m.status}`;
+    const statusLabel = m.status === 'pending' ? '⏳ Pending'
+                      : m.status === 'sent' ? '✅ Sent'
+                      : m.status === 'sending' ? '📤 Sending...'
+                      : '❌ Failed';
+    const targetLabel = m.target === 'all' ? 'All Communities' : (m.targetName || m.target);
+    const msgPreview = (m.text || m.caption || '').slice(0, 100) + ((m.text || m.caption || '').length > 100 ? '...' : '');
+
+    return `<div class="sched-item">
+      <div class="sched-info">
+        <span class="sched-time">📅 ${schedDate}</span>
+        <div class="sched-msg">${msgPreview || `[${m.type} file]`}</div>
+        <div class="sched-meta">
+          <span class="sched-type">${typeIcons[m.type] || '📝'} ${m.type}</span>
+          → ${targetLabel}
+          ${m.fileName ? ` · 📎 ${m.fileName}` : ''}
+          ${m.sentAt ? ` · Sent: ${new Date(m.sentAt).toLocaleString('en-IN')}` : ''}
+          ${m.error ? ` · ❌ ${m.error}` : ''}
+        </div>
+      </div>
+      <div class="sched-actions">
+        <span class="sched-status ${statusClass}">${statusLabel}</span>
+        ${m.status === 'pending' ? `<button class="btn-danger" style="font-size:11px;padding:4px 10px;border-radius:8px;cursor:pointer;background:transparent;border:1px solid var(--danger);color:var(--danger);font-family:'Montserrat',sans-serif;" onclick="cancelScheduled('${m.id}')">Cancel</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function cancelScheduled(id) {
+  if (!confirm('Cancel this scheduled message?')) return;
+  try {
+    const res = await fetch(`${serverUrl}/api/scheduler/${id}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.success) {
+      toast('Scheduled message cancelled', 'success');
+      loadScheduled();
+    } else {
+      toast(`Failed: ${data.error}`, 'danger');
+    }
+  } catch (err) {
+    toast(`Error: ${err.message}`, 'danger');
+  }
+}
+
+function toast(msg, type = 'info') {
+  const icons = { danger: '🚨', success: '✅', info: 'ℹ️' };
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.innerHTML = `<span>${icons[type]}</span><span>${msg}</span>`;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity 0.3s'; }, 4000);
+  setTimeout(() => el.remove(), 4400);
+}
+
+// Drag & drop support
+const uploadArea = document.getElementById('uploadArea');
+uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.style.borderColor = 'var(--accent)'; });
+uploadArea.addEventListener('dragleave', () => { uploadArea.style.borderColor = ''; });
+uploadArea.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadArea.style.borderColor = '';
+  const file = e.dataTransfer.files[0];
+  if (file) {
+    selectedFile = file;
+    document.getElementById('uploadFilename').textContent = `✅ ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`;
+    uploadArea.classList.add('has-file');
+  }
+});
+
+// Init
+loadCommunities();
+loadScheduled();
+// Refresh scheduled list every 30 seconds
+setInterval(loadScheduled, 30000);
+</script>
+</body>
+</html>

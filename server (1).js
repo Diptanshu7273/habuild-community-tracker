@@ -6,13 +6,12 @@
  * =====================================================
  */
 
-require('dotenv').config();
-
 const express = require('express');
 const axios   = require('axios');
 const cors    = require('cors');
 const fs      = require('fs');
 const path    = require('path');
+const multer  = require('multer');
 
 const app = express();
 app.use(cors());
@@ -21,18 +20,24 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const CONFIG = {
-  // All secrets loaded from .env file — never hardcode here
-  MAYTAPI_PRODUCT_ID: process.env.MAYTAPI_PRODUCT_ID,
-  MAYTAPI_TOKEN:      process.env.MAYTAPI_TOKEN,
+  // Get these from https://console.maytapi.com/settings/token
+  MAYTAPI_PRODUCT_ID: process.env.MAYTAPI_PRODUCT_ID || 'bf6a3081-7fec-4509-aabd-60ba0200e883',
+  MAYTAPI_TOKEN:      process.env.MAYTAPI_TOKEN      || 'f944cd30-b896-41fd-b550-9a40789671f5',
   MAYTAPI_BASE:       'https://api.maytapi.com/api',
 
+  // ⚠️ Add ALL 21 of your phone IDs here
+  // Find them at: https://console.maytapi.com → Phones page
+  // OR call GET /listPhones after setting token above
   PHONE_IDS: (process.env.PHONE_IDS || '').split(',').filter(Boolean),
+  // Example: PHONE_IDS=12345,12346,12347 node server.js
 
-  WARN_LIMIT:    parseInt(process.env.WARN_LIMIT || '1600'),
-  MAX_LIMIT:     parseInt(process.env.MAX_LIMIT || '1800'),
+  WARN_LIMIT:    1600,  // Early warning alert
+  MAX_LIMIT:     1800,  // Full alert — needs new link
 
-  ALERT_PHONE_ID: process.env.ALERT_PHONE_ID,
-  ALERT_NUMBER:   process.env.ALERT_NUMBER,
+  // Your WhatsApp number to receive alerts (include country code, no +)
+  // This should be one of your 21 phones OR a manager's personal number
+  ALERT_PHONE_ID: process.env.ALERT_PHONE_ID || '134920',
+  ALERT_NUMBER:   process.env.ALERT_NUMBER   || '91XXXXXXXXXX', // no + sign
 
   PORT:      process.env.PORT || 3000,
   DATA_FILE: path.join(__dirname, 'data', 'communities.json'),
@@ -92,12 +97,16 @@ async function discoverPhones() {
       rawPhones = [];
     }
 
-    db.phones = rawPhones.map(p => ({
-      id:     String(p.id || p.phone_id || p._id),
-      number: p.number || p.phone || '',
-      name:   p.name   || `Phone ${p.id || p.phone_id}`,
-      status: p.status || 'unknown',
-    }));
+    db.phones = rawPhones.map(p => {
+      // Debug: log every field so we can see the actual phone ID
+      console.log('🔍 Phone object:', JSON.stringify(p));
+      return {
+        id:     String(p.phone_id ?? p.id ?? p._id ?? ''),
+        number: p.number || p.phone || '',
+        name:   p.name   || `Phone ${p.phone_id || p.id}`,
+        status: p.status || 'unknown',
+      };
+    });
     saveData(db);
 
     if (CONFIG.PHONE_IDS.length === 0) {
@@ -255,7 +264,7 @@ async function syncAllGroups() {
     const groupId = g.id || g.conversation_id;
     const phoneId = g._phone_id;
 
-    if (count < 0) continue; // skip ghost/empty sub-groups
+    if (count < 5) continue; // skip ghost/empty sub-groups
 
     const key = name.toLowerCase();
     if (!nameMap[key] || count > nameMap[key].count) {
@@ -296,13 +305,18 @@ async function syncAllGroups() {
     await checkAndAlert(id, name, count, phoneId);
   }
 
-  // Remove stale groups no longer returned by API
-  const activeIds = new Set(dedupedGroups.map(g => g.id));
-  for (const id of Object.keys(db.communities)) {
-    if (!activeIds.has(id)) {
-      console.log(`   Removing stale: ${db.communities[id].name}`);
-      delete db.communities[id];
+  // Remove stale groups — BUT only if sync actually returned results
+  // This prevents wiping all data when the API fails/returns 0 groups
+  if (dedupedGroups.length > 0) {
+    const activeIds = new Set(dedupedGroups.map(g => g.id));
+    for (const id of Object.keys(db.communities)) {
+      if (!activeIds.has(id)) {
+        console.log(`   Removing stale: ${db.communities[id].name}`);
+        delete db.communities[id];
+      }
     }
+  } else {
+    console.log('   ⚠️ Sync returned 0 groups — keeping existing data (API may be down)');
   }
 
   saveData(db);
@@ -509,6 +523,166 @@ app.get('/api/health', (req, res) => {
     },
   });
 });
+
+// ─── MESSAGE SCHEDULER ────────────────────────────────────────────────────────
+
+const uploadDir = path.join(__dirname, 'data', 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+const upload = multer({
+  dest: uploadDir,
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
+
+const SCHED_FILE = path.join(__dirname, 'data', 'scheduled.json');
+
+function loadScheduled() {
+  try {
+    if (!fs.existsSync(SCHED_FILE)) return [];
+    return JSON.parse(fs.readFileSync(SCHED_FILE, 'utf8'));
+  } catch { return []; }
+}
+function saveScheduled(msgs) {
+  fs.writeFileSync(SCHED_FILE, JSON.stringify(msgs, null, 2));
+}
+
+let scheduledMessages = loadScheduled();
+
+async function sendGroupMessage(phoneId, groupId, type, text, filePath, fileName) {
+  try {
+    if (type === 'text') {
+      await axios.post(apiUrl(`/${phoneId}/sendMessage`), {
+        to_number: groupId, type: 'text', message: text,
+      }, { headers: maytapiHeaders() });
+    } else {
+      const fileBuffer = fs.readFileSync(filePath);
+      const base64Data = fileBuffer.toString('base64');
+      const ext = path.extname(fileName || '').toLowerCase();
+      let mimeType = 'application/octet-stream';
+      if (['.jpg','.jpeg'].includes(ext)) mimeType = 'image/jpeg';
+      else if (ext === '.png') mimeType = 'image/png';
+      else if (ext === '.gif') mimeType = 'image/gif';
+      else if (ext === '.mp4') mimeType = 'video/mp4';
+      else if (ext === '.pdf') mimeType = 'application/pdf';
+      else if (['.doc','.docx'].includes(ext)) mimeType = 'application/msword';
+      else if (['.xls','.xlsx'].includes(ext)) mimeType = 'application/vnd.ms-excel';
+
+      await axios.post(apiUrl(`/${phoneId}/sendMessage`), {
+        to_number: groupId,
+        type: type === 'document' ? 'document' : type,
+        message: text || '',
+        caption: text || '',
+        ...(type === 'document' && { filename: fileName }),
+        url: `data:${mimeType};base64,${base64Data}`,
+      }, { headers: maytapiHeaders() });
+    }
+    return { success: true };
+  } catch (err) {
+    console.error(`❌ Send to ${groupId} failed:`, err.response?.data || err.message);
+    return { success: false, error: err.response?.data?.message || err.message };
+  }
+}
+
+async function executeScheduledMessage(msg) {
+  console.log(`\n📤 Executing: "${(msg.text || '').slice(0, 50)}..."`);
+  msg.status = 'sending';
+  saveScheduled(scheduledMessages);
+
+  let targetGroups = [];
+  if (msg.target === 'all') {
+    targetGroups = Object.values(db.communities);
+  } else {
+    const c = db.communities[msg.target];
+    if (c) targetGroups = [c];
+  }
+
+  if (!targetGroups.length) {
+    msg.status = 'failed'; msg.error = 'No target communities';
+    saveScheduled(scheduledMessages); return;
+  }
+
+  console.log(`   Sending to ${targetGroups.length} communities...`);
+  let sent = 0, failed = 0;
+
+  for (const group of targetGroups) {
+    const result = await sendGroupMessage(group.phoneId, group.id, msg.type, msg.text, msg.filePath, msg.fileName);
+    if (result.success) { sent++; console.log(`   ✅ ${group.name}`); }
+    else { failed++; console.log(`   ❌ ${group.name}: ${result.error}`); }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+
+  msg.status = failed === 0 ? 'sent' : (sent > 0 ? 'sent' : 'failed');
+  msg.sentAt = new Date().toISOString();
+  msg.sentCount = sent; msg.failCount = failed;
+  msg.error = failed > 0 ? `${failed}/${targetGroups.length} failed` : null;
+  saveScheduled(scheduledMessages);
+  console.log(`✅ Done: ${sent} sent, ${failed} failed\n`);
+}
+
+// Create scheduled message
+app.post('/api/scheduler', upload.single('file'), (req, res) => {
+  try {
+    const { type, target, scheduledAt, text, sendNow } = req.body;
+    if (!type) return res.status(400).json({ success: false, error: 'Type required' });
+    if (!scheduledAt) return res.status(400).json({ success: false, error: 'Time required' });
+
+    const id = `sched_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    let targetName = 'All Communities';
+    if (target !== 'all') { targetName = db.communities[target]?.name || target; }
+
+    const msg = {
+      id, type: type || 'text', target: target || 'all', targetName,
+      scheduledAt, text: text || '',
+      fileName: req.file?.originalname || null,
+      filePath: req.file?.path || null,
+      fileSize: req.file?.size || null,
+      status: 'pending', createdAt: new Date().toISOString(),
+      sentAt: null, sentCount: 0, failCount: 0, error: null,
+    };
+
+    scheduledMessages.unshift(msg);
+    saveScheduled(scheduledMessages);
+
+    if (sendNow === 'true') {
+      executeScheduledMessage(msg);
+      return res.json({ success: true, message: 'Sending now...', id });
+    }
+
+    console.log(`📅 Scheduled for ${new Date(scheduledAt).toLocaleString('en-IN')}`);
+    res.json({ success: true, message: 'Scheduled!', id });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Get all scheduled messages
+app.get('/api/scheduler', (req, res) => {
+  res.json({ messages: scheduledMessages, total: scheduledMessages.length });
+});
+
+// Cancel scheduled message
+app.delete('/api/scheduler/:id', (req, res) => {
+  const idx = scheduledMessages.findIndex(m => m.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ success: false, error: 'Not found' });
+  const msg = scheduledMessages[idx];
+  if (msg.status !== 'pending') return res.status(400).json({ success: false, error: 'Can only cancel pending' });
+  if (msg.filePath && fs.existsSync(msg.filePath)) fs.unlinkSync(msg.filePath);
+  scheduledMessages.splice(idx, 1);
+  saveScheduled(scheduledMessages);
+  res.json({ success: true });
+});
+
+// Scheduler cron — check every 30 seconds
+setInterval(() => {
+  const now = new Date();
+  for (const msg of scheduledMessages) {
+    if (msg.status !== 'pending') continue;
+    if (new Date(msg.scheduledAt) <= now) {
+      console.log(`⏰ Executing scheduled: ${msg.id}`);
+      executeScheduledMessage(msg);
+    }
+  }
+}, 30000);
 
 // ─── START ────────────────────────────────────────────────────────────────────
 app.listen(CONFIG.PORT, async () => {
